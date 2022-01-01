@@ -1,3 +1,5 @@
+"""attempt of rewrite"""
+
 import random
 import time
 from threading import Thread
@@ -22,30 +24,11 @@ def wrap_msg(msg):
 
 
 class Bus:
-    N_SLAVES = 5
-
     def __init__(self, port):
         self.serial = serial.Serial(port, 9600)
-        # we index slaves from zero
-        self.settings = {x: [0, 0, 0, 0] for x in range(1, self.N_SLAVES + 1)}
+        self.settings = {x: [0, 0, 0, 0] for x in range(10)}
         self.add_byte = {}
         self.last = {}
-
-    def set(self, addr, channel, value, *, relative=False):
-        if relative:
-            new = self.settings[addr][channel] + value
-        else:
-            new = value
-        if new > 64:
-            new = 64
-        if new < 0:
-            new = 0
-        self.settings[addr][channel] = new
-
-    def set_all(self, addr, values):
-        if isinstance(values, int):
-            values = [values] * 4
-        self.settings[addr] = list(values)
 
     def send_thread(self, *a):
         while True:
@@ -64,6 +47,10 @@ class Bus:
             self.serial.flush()
             # time.sleep(0.005)
 
+    def set(self, addr, channels, brightness):
+        msg = (addr, *channels, brightness)
+        self.send_bytes(wrap_msg(msg))
+
     def send_bytes(self, bs):
         for b in bs:
             self.serial.write(bytes([b]))
@@ -71,17 +58,5 @@ class Bus:
             time.sleep(0.001)
 
     def send_msg(self, msg):
+        # msg format is 7 bytes: [<start_byt>, <addr>, <ch1_brightness>, <ch2_brightness>, <ch3_brightness>, <ch4_brightness>, <padding byte>, <csum>]
         self.send_bytes(wrap_msg(msg))
-
-    def send_debug_message(self):
-        print("Running a test variant!")
-        while True:
-            self.send_bytes(bs=str(self.settings.items()).encode() + b"\n\n")
-            self.serial.flush()
-            time.sleep(5)
-
-    def start(self, test=False):
-        self.thread = Thread(target=self.send_thread if not test else self.send_debug_message)
-        self.thread.daemon = True
-        self.thread.start()
-        return self
