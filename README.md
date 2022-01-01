@@ -19,7 +19,7 @@ Then run the program in another terminal via:
 poetry run python mlight/main.py --bus-address /dev/pts/10 --test
 ```
 
-and then open in another terminal and read from the output:
+and then open in another terminal and read from the output (you probably need to run this as root):
 ```
 cat < /dev/pts/9
 ```
