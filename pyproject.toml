@@ -13,6 +13,7 @@ pyserial = "*"
 [tool.poetry.dev-dependencies]
 black = "*"
 isort = "^5.10.1"
+pytest-mock = "^3.6.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

@@ -73,10 +73,9 @@ def message_factory(bus: Bus) -> callable:
         if state == "ON":
             if not brightness:
                 logger.warning(
-                    "No brightness received. Using default brightness %s",
-                    DEFAULT_BRIGHTNESS,
+                    "No brightness received. Setting to None"
                 )
-                brightness = DEFAULT_BRIGHTNESS
+                brightness = None
             logger.debug(
                 f"Setting brightness=%s at address=%s channel=%s ",
                 brightness,
@@ -130,12 +129,15 @@ def main(
     topic_prefix: str = "mlight",
     bus_address: str = "/tty/USB0",
     test: bool = False,
+    # how long to wait between indvidual flushes of data to serial
+    # the higher the less CPU it takes
+    send_interval_ms: int = 100,
     logging_level: LoggingLevelType = LoggingLevelType.INFO,
 ):
 
     logging.basicConfig(level=getattr(logging, logging_level))
 
-    bus = Bus(bus_address).start(test=test)
+    bus = Bus(bus_address, send_interval_ms).start(test=test)
 
     callback = message_factory(bus)
     client = client_factory(

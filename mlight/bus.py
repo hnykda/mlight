@@ -2,7 +2,7 @@ import logging
 import random
 import time
 from threading import Thread
-from typing import Iterable, Union
+from typing import Iterable, Optional, Union, List, Dict
 
 import serial
 
@@ -11,6 +11,11 @@ from mlight.constants import DEFAULT_BRIGHTNESS
 logger = logging.getLogger(__name__)
 
 FLUSH_PERIOD = 0.001
+
+Address = int
+# Brightness is always between 0 and 64
+Brightness = int
+Brightnesses = List[Brightness]
 
 
 def RL(a, k):
@@ -29,56 +34,82 @@ def wrap_msg(msg):
     return bytes([253]) + bytes(msg) + bytes([compute_csum(msg)])
 
 
+def serial_factory(port):
+    return serial.Serial(port, 9600)
+
+
 class Bus:
     N_SLAVES = 5
 
-    def __init__(self, port):
-        self.serial = serial.Serial(port, 9600)
+    def __init__(self, port: str, send_interval_ms: int = 100):
+        self.serial = serial_factory(port)
         # we index slaves from zero
-        self.settings = {
-            x: [DEFAULT_BRIGHTNESS] * 4 for x in range(1, self.N_SLAVES + 1)
-        }
+        self.settings: Dict[Address, Brightnesses] = {}
+        self.before_off_settings: Dict[Address, Brightnesses] = {}
         self.add_byte = {}
         self.last = {}
+        self.send_interval_ms = send_interval_ms / 1000
 
-    def set(self, addr, channel, value, *, relative=False):
-        if relative:
-            new = self.settings[addr][channel] + value
-        else:
-            new = value
-        if new > 64:
-            new = 64
-        if new < 0:
-            new = 0
-        self.settings[addr][channel] = new
+    def set(self, address: Address, channel: int, value: Optional[Brightness]) -> None:
+        if address not in self.settings:
+            self.settings[address] = [0] * 4
+            self.before_off_settings[address] = self.before_off_settings.get(address, {})
+
+        if value is None:
+            # if switching on without brightness, try to restore the previous one
+            # fallback to DEFAULT_BRIGHTNESS
+            # TODO: this feel like wrong layers
+            logger.debug(
+                "Restoring previous brightness for address %s, channel %s",
+                address,
+                channel,
+            )
+            value = self.before_off_settings[address].get(channel, DEFAULT_BRIGHTNESS)
+        elif value == 0 and address in self.before_off_settings:
+            # save original brightness before nulling
+            logger.debug(
+                "Saving brightness %s for address %s, channel %s",
+                value, address, channel,
+            )
+            self.before_off_settings[address][channel] = self.settings[address][channel]
+
+        self.settings[address][channel] = value
+
         logger.debug(
             "Set bus state on address=%s channel=%s to brightness=%s",
-            addr,
+            address,
             channel,
-            new,
+            value,
         )
+        return self.settings[address][channel]
 
     def set_all(self, addr, values: Union[Iterable, int]):
         if isinstance(values, int):
             values = [values] * 4
         self.settings[addr] = list(values)
 
-    def send_thread(self, *a):
+    def _send_thread(self):
+        for addr, chans in list(self.settings.items()):
+            chans = tuple(chans)
+            if addr in self.last and addr in self.add_byte and self.last[addr] == chans:
+                add_b = self.add_byte[addr]
+            else:
+                add_b = self.add_byte[addr] = random.randrange(256)
+            self.send_msg((addr,) + chans + (add_b,))
+            self.last[addr] = tuple(chans)
+
+            if not any(chans):
+                logger.debug(
+                    "Removing address %s from settings. All channels are 0.", addr
+                )
+                # TODO: feels hackish
+                del self.settings[addr]
+
+    def send_thread(self):
         while True:
-            for addr, chans in list(self.settings.items()):
-                chans = tuple(chans)
-                if (
-                    addr in self.last
-                    and addr in self.add_byte
-                    and self.last[addr] == chans
-                ):
-                    add_b = self.add_byte[addr]
-                else:
-                    add_b = self.add_byte[addr] = random.randrange(256)
-                self.send_msg((addr,) + chans + (add_b,))
-                self.last[addr] = tuple(chans)
+            self._send_thread()
             self.serial.flush()
-            # time.sleep(0.005)
+            time.sleep(self.send_interval_ms)
 
     def send_bytes(self, bs):
         for b in bs:
