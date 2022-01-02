@@ -1,14 +1,17 @@
 import json
 import logging
-from typing import Tuple
+from enum import Enum
+from typing import Literal, Optional, Tuple
 
 import paho.mqtt.client as mqtt
 import typer
 
 from mlight.bus import Bus
+from mlight.constants import DEFAULT_BRIGHTNESS
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
 
 
 class MLightError(RuntimeError):
@@ -30,29 +33,64 @@ def decode_topic(topic: str) -> Tuple[int]:
     if 1 > address > 255:
         raise MLightError("Address must be between 1 and 255")
 
-    return address, channel 
+    return address, channel
 
 
-def get_payload(payload: bytes) -> dict:
-    return json.loads(payload.decode("utf-8"))
+def get_state(msg) -> Literal["ON", "OFF"]:
+    try:
+        state = msg["state"]  # state must always be present
+    except KeyError:
+        raise MLightError("Message must contain a `state` key")
+
+    if state not in {"ON", "OFF"}:
+        raise MLightError("State must be either `ON` or `OFF`")
+
+    return state
+
+
+def get_brightness(msg):
+    brightness = msg.get("brightness")
+    if brightness and 0 > brightness > 64:
+        raise MLightError("Brightness must be between 0 and 64")
+    return brightness
+
+
+def parse_payload(payload: bytes) -> Tuple[str, Optional[int]]:
+    msg = json.loads(payload.decode("utf-8"))
+
+    brightness = get_brightness(msg)
+    state = get_state(msg)
+
+    return state, brightness
+
 
 def message_factory(bus: Bus) -> callable:
     def on_message(client, userdata, msg) -> None:
         address, channel = decode_topic(msg.topic)
-        
-        payload = get_payload(msg.payload)
 
-        brightness = payload["brightness"]
-        if 0 > brightness > 64:
-            raise MLightError("Brightness must be between 0 and 64")
+        state, brightness = parse_payload(msg.payload)
 
-        logger.debug(
-            f"Setting brightness=%s at address=%s channel=%s ",
-            brightness,
-            address,
-            channel,
-        )
-        bus.set(address, channel, brightness)
+        if state == "ON":
+            if not brightness:
+                logger.warning(
+                    "No brightness received. Using default brightness %s",
+                    DEFAULT_BRIGHTNESS,
+                )
+                brightness = DEFAULT_BRIGHTNESS
+            logger.debug(
+                f"Setting brightness=%s at address=%s channel=%s ",
+                brightness,
+                address,
+                channel,
+            )
+            bus.set(address, channel, brightness)
+        elif state == "OFF":
+            logger.debug(
+                "Setting OFF (brightness=0) at address=%s channel=%s", address, channel
+            )
+            bus.set(address, channel, 0)
+        else:
+            raise MLightError("Unknown behavior based on the received message")
 
     return on_message
 
@@ -77,6 +115,13 @@ def client_factory(
     return client
 
 
+class LoggingLevelType(str, Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+
+
 def main(
     server_address: str = "192.168.0.202",
     server_port: int = 1883,
@@ -85,7 +130,11 @@ def main(
     topic_prefix: str = "mlight",
     bus_address: str = "/tty/USB0",
     test: bool = False,
+    logging_level: LoggingLevelType = LoggingLevelType.INFO,
 ):
+
+    logging.basicConfig(level=getattr(logging, logging_level))
+
     bus = Bus(bus_address).start(test=test)
 
     callback = message_factory(bus)

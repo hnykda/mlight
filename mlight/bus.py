@@ -1,8 +1,16 @@
+import logging
 import random
 import time
 from threading import Thread
+from typing import Iterable, Union
 
 import serial
+
+from mlight.constants import DEFAULT_BRIGHTNESS
+
+logger = logging.getLogger(__name__)
+
+FLUSH_PERIOD = 0.001
 
 
 def RL(a, k):
@@ -27,7 +35,9 @@ class Bus:
     def __init__(self, port):
         self.serial = serial.Serial(port, 9600)
         # we index slaves from zero
-        self.settings = {x: [0, 0, 0, 0] for x in range(1, self.N_SLAVES + 1)}
+        self.settings = {
+            x: [DEFAULT_BRIGHTNESS] * 4 for x in range(1, self.N_SLAVES + 1)
+        }
         self.add_byte = {}
         self.last = {}
 
@@ -41,8 +51,14 @@ class Bus:
         if new < 0:
             new = 0
         self.settings[addr][channel] = new
+        logger.debug(
+            "Set bus state on address=%s channel=%s to brightness=%s",
+            addr,
+            channel,
+            new,
+        )
 
-    def set_all(self, addr, values):
+    def set_all(self, addr, values: Union[Iterable, int]):
         if isinstance(values, int):
             values = [values] * 4
         self.settings[addr] = list(values)
@@ -68,9 +84,10 @@ class Bus:
         for b in bs:
             self.serial.write(bytes([b]))
             self.serial.flush()
-            time.sleep(0.001)
+            time.sleep(FLUSH_PERIOD)
 
     def send_msg(self, msg):
+        logger.debug("Sending: %s", msg)
         self.send_bytes(wrap_msg(msg))
 
     def send_debug_message(self):
@@ -81,7 +98,9 @@ class Bus:
             time.sleep(5)
 
     def start(self, test=False):
-        self.thread = Thread(target=self.send_thread if not test else self.send_debug_message)
+        self.thread = Thread(
+            target=self.send_thread if not test else self.send_debug_message
+        )
         self.thread.daemon = True
         self.thread.start()
         return self

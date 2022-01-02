@@ -1,0 +1,18 @@
+[Unit]
+Description=Mlight server to control lights
+Wants=network.target
+
+[Service]
+Type=simple
+User=alarm
+Group=alarm
+WorkingDirectory=/home/alarm/wsban/server
+
+# edit the python interpreter
+ExecStart=$HOME/.poetry/bin/poetry run python mlight/main.py --bus-address /dev/ttyUSB1
+KillSignal=SIGINT
+Restart=on-failure
+SyslogIdentifier=mlight
+
+[Install]
+WantedBy=multi-user.target
