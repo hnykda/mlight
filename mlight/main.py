@@ -72,7 +72,7 @@ def message_factory(bus: Bus) -> callable:
 
         if state == "ON":
             if not brightness:
-                logger.warning(
+                logger.debug(
                     "No brightness received. Setting to None"
                 )
                 brightness = None
